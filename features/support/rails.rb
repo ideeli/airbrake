@@ -1,20 +1,3 @@
-BUNDLE_ENV_VARS = %w(RUBYOPT BUNDLE_PATH BUNDLE_BIN_PATH BUNDLE_GEMFILE)
-ORIGINAL_BUNDLE_VARS = Hash[ENV.select{ |key,value| BUNDLE_ENV_VARS.include?(key) }]
-
-ENV['RAILS_ENV'] = 'test'
-
-Before do
-  ENV['BUNDLE_GEMFILE'] = File.join(Dir.pwd, ENV['BUNDLE_GEMFILE']) unless ENV['BUNDLE_GEMFILE'].start_with?(Dir.pwd)
-  @framework_version = nil
-end
-
-After do |s|
-  ORIGINAL_BUNDLE_VARS.each_pair do |key, value|
-    ENV[key] = value
-  end
-  Cucumber.wants_to_quit = true if s.failed?
-end
-
 module RailsHelpers
   def rails_root_exists?
     File.exists?(environment_path)
@@ -38,9 +21,7 @@ module RailsHelpers
 
   def rails_version
     @rails_version ||= begin
-      if ENV["RAILS_VERSION"]
-        ENV["RAILS_VERSION"]
-      elsif bundler_manages_gems?
+      if bundler_manages_gems?
         rails_version = open(gemfile_path).read.match(/gem.*rails["'].*["'](.+)["']/)[1]
       else
         environment_file = File.join(rails_root, 'config', 'environment.rb')
@@ -69,16 +50,20 @@ module RailsHelpers
     rails3? || rails_version =~ /^2\./
   end
 
-  def version_string
-    ENV['RAILS_VERSION'] || `tail -n 1 SUPPORTED_RAILS_VERSIONS` # use latest version if ENV["RAILS_VERSION"] is undefined
-  end
-
   def environment_path
     File.join(rails_root, 'config', 'environment.rb')
   end
 
   def rakefile_path
     File.join(rails_root, 'Rakefile')
+  end
+
+  def bundle_gem(gem_name, version = nil)
+    File.open(gemfile_path, 'a') do |file|
+      gem = "gem '#{gem_name}'"
+      gem += ", '#{version}'" if version
+      file.puts(gem)
+    end
   end
 
   def config_gem(gem_name, version = nil)
@@ -122,16 +107,13 @@ module RailsHelpers
     File.open(rakefile_path, 'wb') { |file| file.write(content) }
   end
 
-def perform_request(uri, environment = 'production')
+  def perform_request(uri, environment = 'production')
+    if rails3?
       request_script = <<-SCRIPT
-        require File.expand_path('../config/environment', __FILE__)
-
+        require 'config/environment'
 
         env      = Rack::MockRequest.env_for(#{uri.inspect})
-        response = RailsRoot::Application.call(env)
-
-
-        response = response.last if response.last.is_a?(ActionDispatch::Response)
+        response = RailsRoot::Application.call(env).last
 
         if response.is_a?(Array)
           puts response.join
@@ -140,8 +122,60 @@ def perform_request(uri, environment = 'production')
         end
       SCRIPT
       File.open(File.join(rails_root, 'request.rb'), 'w') { |file| file.write(request_script) }
-  end
+      @terminal.cd(rails_root)
+      @terminal.run("ruby -rthread ./script/rails runner -e #{environment} request.rb")
+    elsif rails_uses_rack?
+      request_script = <<-SCRIPT
+        require 'config/environment'
 
+        env = Rack::MockRequest.env_for(#{uri.inspect})
+        app = Rack::Lint.new(ActionController::Dispatcher.new)
+
+        status, headers, body = app.call(env)
+
+        response = ""
+        if body.respond_to?(:to_str)
+          response << body
+        else
+          body.each { |part| response << part }
+        end
+
+        puts response
+      SCRIPT
+      File.open(File.join(rails_root, 'request.rb'), 'w') { |file| file.write(request_script) }
+      @terminal.cd(rails_root)
+      @terminal.run("ruby -rthread ./script/runner -e #{environment} request.rb")
+    else
+      uri = URI.parse(uri)
+      request_script = <<-SCRIPT
+        require 'cgi'
+        class CGIWrapper < CGI
+          def initialize(*args)
+            @env_table = {}
+            @stdinput = $stdin
+            super(*args)
+          end
+          attr_reader :env_table
+        end
+        $stdin = StringIO.new("")
+        cgi = CGIWrapper.new
+        cgi.env_table.update({
+          'HTTPS'          => 'off',
+          'REQUEST_METHOD' => "GET",
+          'HTTP_HOST'      => #{[uri.host, uri.port].join(':').inspect},
+          'SERVER_PORT'    => #{uri.port.inspect},
+          'REQUEST_URI'    => #{uri.request_uri.inspect},
+          'PATH_INFO'      => #{uri.path.inspect},
+          'QUERY_STRING'   => #{uri.query.inspect}
+        })
+        require 'dispatcher' unless defined?(ActionController::Dispatcher)
+        Dispatcher.dispatch(cgi)
+      SCRIPT
+      File.open(File.join(rails_root, 'request.rb'), 'w') { |file| file.write(request_script) }
+      @terminal.cd(rails_root)
+      @terminal.run("ruby -rthread ./script/runner -e #{environment} request.rb")
+    end
+  end
 end
 
 World(RailsHelpers)

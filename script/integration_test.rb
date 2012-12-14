@@ -14,7 +14,7 @@ require 'rails/init'
 fail "Please supply an API Key as the first argument" if ARGV.empty?
 
 host = ARGV[1]
-host ||= "api.airbrake.io"
+host ||= "airbrakeapp.com"
 
 secure = (ARGV[2] == "secure")
 

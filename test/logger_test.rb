@@ -1,4 +1,4 @@
-require File.expand_path '../helper', __FILE__
+require File.dirname(__FILE__) + '/helper'
 
 class LoggerTest < Test::Unit::TestCase
   def stub_http(response, body = nil)
@@ -11,11 +11,23 @@ class LoggerTest < Test::Unit::TestCase
   end
 
   def send_notice
-    Airbrake.sender.send_to_airbrake({'foo' => "bar"})
+    Airbrake.sender.send_to_airbrake('data')
   end
 
   def stub_verbose_log
     Airbrake.stubs(:write_verbose_log)
+  end
+
+  def assert_logged(expected)
+    assert_received(Airbrake, :write_verbose_log) do |expect|
+      expect.with {|actual| actual =~ expected }
+    end
+  end
+
+  def assert_not_logged(expected)
+    assert_received(Airbrake, :write_verbose_log) do |expect|
+      expect.with {|actual| actual =~ expected }.never
+    end
   end
 
   def configure
@@ -70,10 +82,4 @@ class LoggerTest < Test::Unit::TestCase
     assert_logged /Response from Airbrake:/
   end
 
-  should "print information about the notice when Airbrake server fails" do
-    stub_verbose_log
-    stub_http(Net::HTTPError, "test")
-    send_notice
-    assert_logged /Notice details:/
-  end
 end

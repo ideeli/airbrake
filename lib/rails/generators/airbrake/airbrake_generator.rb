@@ -49,7 +49,7 @@ class AirbrakeGenerator < Rails::Generators::Base
     s = if options[:api_key]
       "'#{options[:api_key]}'"
     elsif options[:heroku]
-      "ENV['AIRBRAKE_API_KEY']"
+      "ENV['HOPTOAD_API_KEY']"
     end
   end
 
@@ -59,31 +59,27 @@ class AirbrakeGenerator < Rails::Generators::Base
 
   def determine_api_key
     puts "Attempting to determine your API Key from Heroku..."
-    ENV['AIRBRAKE_API_KEY'] = heroku_api_key
-    if ENV['AIRBRAKE_API_KEY'].blank?
+    ENV['HOPTOAD_API_KEY'] = heroku_api_key
+    if ENV['HOPTOAD_API_KEY'].blank?
       puts "... Failed."
       puts "WARNING: We were unable to detect the Airbrake API Key from your Heroku environment."
       puts "Your Heroku application environment may not be configured correctly."
       exit 1
     else
       puts "... Done."
-      puts "Heroku's Airbrake API Key is '#{ENV['AIRBRAKE_API_KEY']}'"
+      puts "Heroku's Airbrake API Key is '#{ENV['HOPTOAD_API_KEY']}'"
     end
   end
 
-  def heroku_var(var,app_name = nil)
-    app = app_name ? "-a #{app_name}" : ''
-    `heroku config:get #{var} #{app}`
-  end
-
   def heroku_api_key
-    heroku_var("AIRBRAKE_API_KEY",options[:app]).split.find {|x| x unless x.blank?}
+    app = options[:app] ? " --app #{options[:app]}" : ''
+    `heroku console#{app} 'puts ENV[%{HOPTOAD_API_KEY}]'`.split("\n").first
   end
 
   def heroku?
     options[:heroku] ||
-      system("grep AIRBRAKE_API_KEY config/initializers/airbrake.rb") ||
-      system("grep AIRBRAKE_API_KEY config/environment.rb")
+      system("grep HOPTOAD_API_KEY config/initializers/airbrake.rb") ||
+      system("grep HOPTOAD_API_KEY config/environment.rb")
   end
 
   def api_key_configured?
@@ -91,7 +87,7 @@ class AirbrakeGenerator < Rails::Generators::Base
   end
 
   def test_airbrake
-    puts run("rake airbrake:test")
+    puts run("rake airbrake:test --trace")
   end
 
   def plugin_is_present?

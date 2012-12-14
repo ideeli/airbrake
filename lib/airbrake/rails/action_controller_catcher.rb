@@ -2,12 +2,10 @@ module Airbrake
   module Rails
     module ActionControllerCatcher
 
-      # Sets up an alias chain to catch exceptions for Rails 2
+      # Sets up an alias chain to catch exceptions when Rails does
       def self.included(base) #:nodoc:
-        if base.method_defined?(:rescue_action_in_public)
-          base.send(:alias_method, :rescue_action_in_public_without_airbrake, :rescue_action_in_public)
-          base.send(:alias_method, :rescue_action_in_public, :rescue_action_in_public_with_airbrake)
-        end
+        base.send(:alias_method, :rescue_action_in_public_without_airbrake, :rescue_action_in_public)
+        base.send(:alias_method, :rescue_action_in_public, :rescue_action_in_public_with_airbrake)
       end
 
       private

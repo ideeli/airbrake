@@ -34,7 +34,7 @@ class AirbrakeGenerator < Rails::Generator::Base
         end
       end
       determine_api_key if heroku?
-      m.rake "airbrake:test", :generate_only => true
+      m.rake "airbrake:test --trace", :generate_only => true
     end
   end
 
@@ -60,13 +60,9 @@ class AirbrakeGenerator < Rails::Generator::Base
     end
   end
 
-  def heroku_var(var,app_name = nil)
-    app = app_name ? "--app #{app_name}" : ''
-    `heroku config #{app} | grep -E "#{var.upcase}" | awk '{ print $3; }'`.strip
-  end
-
   def heroku_api_key
-    heroku_var("(hoptoad|airbrake)_api_key",options[:app]).split.find {|x| x unless x.blank?}
+    app = options[:app] ? " --app #{options[:app]}" : ''
+    `heroku console#{app} 'puts ENV[%{HOPTOAD_API_KEY}]'`.split("\n").first
   end
 
   def heroku?

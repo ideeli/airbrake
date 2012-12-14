@@ -4,21 +4,6 @@ require 'socket'
 module Airbrake
   class Notice
 
-    class << self
-      def attr_reader_with_tracking(*names)
-        attr_readers.concat(names)
-        attr_reader_without_tracking(*names)
-      end
-
-      alias_method :attr_reader_without_tracking, :attr_reader
-      alias_method :attr_reader, :attr_reader_with_tracking
-
-
-      def attr_readers
-        @attr_readers ||= []
-      end
-    end
-
     # The exception that caused this notice, if any
     attr_reader :exception
 
@@ -60,7 +45,7 @@ module Airbrake
     # A hash of session data from the request
     attr_reader :session_data
 
-    # The path to the project that caused the error (usually Rails.root)
+    # The path to the project that caused the error (usually RAILS_ROOT)
     attr_reader :project_root
 
     # The URL at which the error occurred (if any)
@@ -83,23 +68,6 @@ module Airbrake
 
     # The host name where this error occurred (if any)
     attr_reader :hostname
-
-    # Details about the user who experienced the error
-    attr_reader :user
-
-    private
-
-    # Private writers for all the attributes
-    attr_writer :exception, :api_key, :backtrace, :error_class, :error_message,
-      :backtrace_filters, :parameters, :params_filters,
-      :session_data, :project_root, :url, :ignore,
-      :ignore_by_filters, :notifier_name, :notifier_url, :notifier_version,
-      :component, :action, :cgi_data, :environment_name, :hostname, :user
-
-    # Arguments given in the initializer
-    attr_accessor :args
-
-    public
 
     def initialize(args)
       self.args         = args
@@ -128,11 +96,10 @@ module Airbrake
       self.backtrace        = Backtrace.parse(exception_attribute(:backtrace, caller), :filters => self.backtrace_filters)
       self.error_class      = exception_attribute(:error_class) {|exception| exception.class.name }
       self.error_message    = exception_attribute(:error_message, 'Notification') do |exception|
-        "#{exception.class.name}: #{args[:error_message] || exception.message}"
+        "#{exception.class.name}: #{exception.message}"
       end
 
       self.hostname        = local_hostname
-      self.user = args[:user]
 
       also_use_rack_params_filters
       find_session_data
@@ -194,17 +161,6 @@ module Airbrake
           env.tag!("environment-name", environment_name)
           env.tag!("hostname", hostname)
         end
-        unless user.blank?
-          notice.tag!("current-user") do |u|
-            u.tag!("id",user[:id])
-            u.tag!("name",user[:name])
-            u.tag!("email",user[:email])
-            u.tag!("username",user[:username])
-          end
-        end
-        unless framework.blank?
-          notice.tag!("framework", framework)
-        end
       end
       xml.to_s
     end
@@ -232,6 +188,14 @@ module Airbrake
 
     private
 
+    attr_writer :exception, :api_key, :backtrace, :error_class, :error_message,
+      :backtrace_filters, :parameters, :params_filters,
+      :environment_filters, :session_data, :project_root, :url, :ignore,
+      :ignore_by_filters, :notifier_name, :notifier_url, :notifier_version,
+      :component, :action, :cgi_data, :environment_name, :hostname
+
+    # Arguments given in the initializer
+    attr_accessor :args
 
     # Gets a property named +attribute+ of an exception, either from an actual
     # exception or a hash.
@@ -277,7 +241,7 @@ module Airbrake
           result.merge(key => clean_unserializable_data(value, stack + [data.object_id]))
         end
       elsif data.respond_to?(:to_ary)
-        data.to_ary.collect do |value|
+        data.collect do |value|
           clean_unserializable_data(value, stack + [data.object_id])
         end
       else
@@ -320,7 +284,7 @@ module Airbrake
 
     def filter_key?(key)
       params_filters.any? do |filter|
-        key.to_s.eql?(filter.to_s)
+        key.to_s.include?(filter.to_s)
       end
     end
 
@@ -353,8 +317,6 @@ module Airbrake
 
     def rack_env(method)
       rack_request.send(method) if rack_request
-    rescue
-      {:message => "failed to call #{method} on Rack::Request -- #{$!.message}"}
     end
 
     def rack_request
@@ -382,16 +344,5 @@ module Airbrake
       Socket.gethostname
     end
 
-    def framework
-      Airbrake.configuration.framework
-    end
-
-    def to_s
-      content = []
-      self.class.attr_readers.each do |attr|
-        content << "  #{attr}: #{send(attr)}"
-      end
-      content.join("\n")
-    end
   end
 end
