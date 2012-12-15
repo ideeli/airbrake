@@ -1,8 +1,8 @@
 # Defines deploy:notify_airbrake which will send information about the deploy to Airbrake.
 
 Capistrano::Configuration.instance(:must_exist).load do
-  after "deploy",            "deploy:notify_airbrake"
-  after "deploy:migrations", "deploy:notify_airbrake"
+  #after "deploy",            "deploy:notify_airbrake"
+  #after "deploy:migrations", "deploy:notify_airbrake"
 
   namespace :deploy do
     desc "Notify Airbrake of the deployment"

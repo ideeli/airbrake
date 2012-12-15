@@ -127,6 +127,13 @@ module Airbrake
     def send_notice(notice)
       if configuration.public?
         sender.send_to_airbrake(notice.to_xml)
+        send_to_statsd(notice)
+      end
+    end
+
+    def send_to_statsd(notice)
+      if statsd = configuration.statsd
+        statsd.increment("airbrake.#{notice.controller}.#{notice.action}")
       end
     end
 
