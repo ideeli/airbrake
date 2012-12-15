@@ -1,7 +1,18 @@
 namespace :airbrake do
   desc "Notify Airbrake of a new deploy."
-  task :deploy => :environment do
+  task :deploy do
     require 'airbrake_tasks'
+
+    if defined?(Rails.root)
+      initializer_file = Rails.root.join('config', 'initializers','airbrake.rb')
+
+      if initializer_file.exist?
+        load initializer_file
+      else
+        Rake::Task[:environment].invoke
+      end
+    end
+
     AirbrakeTasks.deploy(:rails_env      => ENV['TO'],
                         :scm_revision   => ENV['REVISION'],
                         :scm_repository => ENV['REPO'],
@@ -18,10 +29,16 @@ namespace :airbrake do
   namespace :heroku do
     desc "Install Heroku deploy notifications addon"
     task :add_deploy_notification => [:environment] do
-      heroku_api_key = `heroku console 'puts ENV[%{HOPTOAD_API_KEY}]' | head -n 1`.strip
-      heroku_rails_env = `heroku console 'puts RAILS_ENV' | head -n 1`.strip
 
-      command = %Q(heroku addons:add deployhooks:http url="http://airbrakeapp.com/deploys.txt?deploy[rails_env]=#{heroku_rails_env}&api_key=#{heroku_api_key}")
+      def heroku_var(var)
+        `heroku config | grep -E "#{var.upcase}" | awk '{ print $3; }'`.strip
+      end
+
+      heroku_rails_env = heroku_var("rails_env")
+      heroku_api_key = heroku_var("(hoptoad|airbrake)_api_key").split.find {|x| x unless x.blank?} ||
+        Airbrake.configuration.api_key
+
+      command = %Q(heroku addons:add deployhooks:http --url="http://airbrake.io/deploys.txt?deploy[rails_env]=#{heroku_rails_env}&api_key=#{heroku_api_key}")
 
       puts "\nRunning:\n#{command}\n"
       puts `#{command}`

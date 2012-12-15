@@ -1,13 +1,12 @@
+begin
+  require "girl_friday"
+rescue LoadError
+end
+
 require 'net/http'
 require 'net/https'
 require 'rubygems'
-begin
-  require 'active_support'
-  require 'active_support/core_ext'
-rescue LoadError
-  require 'activesupport'
-  require 'activesupport/core_ext'
-end
+require 'airbrake/extensions/blank'
 require 'airbrake/version'
 require 'airbrake/configuration'
 require 'airbrake/notice'
@@ -18,9 +17,8 @@ require 'airbrake/user_informer'
 
 require 'airbrake/railtie' if defined?(Rails::Railtie)
 
-# Gem for applications to automatically post errors to the Airbrake of their choice.
 module Airbrake
-  API_VERSION = "2.2"
+  API_VERSION = "2.3"
   LOG_PREFIX = "** [Airbrake] "
 
   HEADERS = {
@@ -35,7 +33,7 @@ module Airbrake
 
     # A Airbrake configuration object. Must act like a hash and return sensible
     # values for all Airbrake configuration options. See Airbrake::Configuration.
-    attr_accessor :configuration
+    attr_writer :configuration
 
     # Tell the log that the Notifier is good to go
     def report_ready
@@ -52,16 +50,21 @@ module Airbrake
       write_verbose_log("Response from Airbrake: \n#{response}")
     end
 
+    # Prints out the details about the notice that wasn't sent to server
+    def report_notice(notice)
+      write_verbose_log("Notice details: \n#{notice}")
+    end
+
     # Returns the Ruby version, Rails version, and current Rails environment
     def environment_info
       info = "[Ruby: #{RUBY_VERSION}]"
-      info << " [#{configuration.framework}]"
-      info << " [Env: #{configuration.environment_name}]"
+      info << " [#{configuration.framework}]" if configuration.framework
+      info << " [Env: #{configuration.environment_name}]" if configuration.environment_name
     end
 
     # Writes out the given message to the #logger
     def write_verbose_log(message)
-      logger.info LOG_PREFIX + message if logger
+      logger.debug LOG_PREFIX + message if logger
     end
 
     # Look for the Rails logger currently defined
@@ -77,10 +80,16 @@ module Airbrake
     #     config.secure  = false
     #   end
     def configure(silent = false)
-      self.configuration ||= Configuration.new
       yield(configuration)
       self.sender = Sender.new(configuration)
       report_ready unless silent
+      self.sender
+    end
+
+    # The configuration object.
+    # @see Airbrake.configure
+    def configuration
+      @configuration ||= Configuration.new
     end
 
     # Sends an exception manually using this method, even when you are not in a controller.
@@ -126,24 +135,18 @@ module Airbrake
 
     def send_notice(notice)
       if configuration.public?
-        sender.send_to_airbrake(notice.to_xml)
-        send_to_statsd(notice)
-      end
-    end
-
-    def send_to_statsd(notice)
-      if statsd = configuration.statsd
-        statsd.increment("airbrake.#{notice.controller}.#{notice.action}")
+        if configuration.async?
+          configuration.async.call(notice)
+        else
+          sender.send_to_airbrake(notice)
+        end
       end
     end
 
     def build_notice_for(exception, opts = {})
       exception = unwrap_exception(exception)
-      if exception.respond_to?(:to_hash)
-        opts = opts.merge(exception.to_hash)
-      else
-        opts = opts.merge(:exception => exception)
-      end
+      opts = opts.merge(:exception => exception) if exception.is_a?(Exception)
+      opts = opts.merge(exception.to_hash) if exception.respond_to?(:to_hash)
       Notice.new(configuration.merge(opts))
     end
 

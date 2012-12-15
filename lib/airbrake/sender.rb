@@ -13,18 +13,94 @@ module Airbrake
                    Errno::ECONNREFUSED].freeze
 
     def initialize(options = {})
-      [:proxy_host, :proxy_port, :proxy_user, :proxy_pass, :protocol,
-        :host, :port, :secure, :http_open_timeout, :http_read_timeout].each do |option|
+      [ :proxy_host,
+        :proxy_port,
+        :proxy_user,
+        :proxy_pass,
+        :protocol,
+        :host,
+        :port,
+        :secure,
+        :use_system_ssl_cert_chain,
+        :http_open_timeout,
+        :http_read_timeout
+      ].each do |option|
         instance_variable_set("@#{option}", options[option])
       end
     end
 
     # Sends the notice data off to Airbrake for processing.
     #
-    # @param [String] data The XML notice to be sent off
-    def send_to_airbrake(data)
-      logger.debug { "Sending request to #{url.to_s}:\n#{data}" } if logger
+    # @param [Notice or String] notice The notice to be sent off
+    def send_to_airbrake(notice)
+      data = notice.respond_to?(:to_xml) ? notice.to_xml : notice
+      http = setup_http_connection
 
+      response = begin
+                   http.post(url.path, data, HEADERS)
+                 rescue *HTTP_ERRORS => e
+                   log :level => :error,
+                       :message => "Unable to contact the Airbrake server. HTTP Error=#{e}"
+                   nil
+                 end
+
+      case response
+      when Net::HTTPSuccess then
+        log :level => :info,
+            :message => "Success: #{response.class}",
+            :response => response
+      else
+        log :level => :error,
+            :message => "Failure: #{response.class}",
+            :response => response,
+            :notice => notice
+      end
+
+      if response && response.respond_to?(:body)
+        error_id = response.body.match(%r{<id[^>]*>(.*?)</id>})
+        error_id[1] if error_id
+      end
+    rescue => e
+      log :level => :error,
+        :message => "[Airbrake::Sender#send_to_airbrake] Cannot send notification. Error: #{e.class}" +
+        " - #{e.message}\nBacktrace:\n#{e.backtrace.join("\n\t")}"
+
+      nil
+    end
+
+    attr_reader :proxy_host,
+                :proxy_port,
+                :proxy_user,
+                :proxy_pass,
+                :protocol,
+                :host,
+                :port,
+                :secure,
+                :use_system_ssl_cert_chain,
+                :http_open_timeout,
+                :http_read_timeout
+
+    alias_method :secure?, :secure
+    alias_method :use_system_ssl_cert_chain?, :use_system_ssl_cert_chain
+
+  private
+
+    def url
+      URI.parse("#{protocol}://#{host}:#{port}").merge(NOTICES_URI)
+    end
+
+    def log(opts = {})
+      opts[:logger].send opts[:level], LOG_PREFIX + opts[:message] if opts[:logger]
+      Airbrake.report_environment_info
+      Airbrake.report_response_body(opts[:response].body) if opts[:response] && opts[:response].respond_to?(:body)
+      Airbrake.report_notice(opts[:notice]) if opts[:notice]
+    end
+
+    def logger
+      Airbrake.logger
+    end
+
+    def setup_http_connection
       http =
         Net::HTTP::Proxy(proxy_host, proxy_port, proxy_user, proxy_pass).
         new(url.host, url.port)
@@ -32,52 +108,21 @@ module Airbrake
       http.read_timeout = http_read_timeout
       http.open_timeout = http_open_timeout
 
-      if secure
+      if secure?
         http.use_ssl     = true
-        http.ca_file     = OpenSSL::X509::DEFAULT_CERT_FILE if File.exist?(OpenSSL::X509::DEFAULT_CERT_FILE)
-        http.verify_mode = OpenSSL::SSL::VERIFY_PEER
+
+        http.ca_file      = Airbrake.configuration.ca_bundle_path
+        http.verify_mode  = OpenSSL::SSL::VERIFY_PEER
       else
         http.use_ssl     = false
       end
 
-      response = begin
-                   http.post(url.path, data, HEADERS)
-                 rescue *HTTP_ERRORS => e
-                   log :error, "Timeout while contacting the Airbrake server."
-                   nil
-                 end
-
-      case response
-      when Net::HTTPSuccess then
-        log :info, "Success: #{response.class}", response
-      else
-        log :error, "Failure: #{response.class}", response
-      end
-
-      if response && response.respond_to?(:body)
-        error_id = response.body.match(%r{<error-id[^>]*>(.*?)</error-id>})
-        error_id[1] if error_id
-      end
+      http
+    rescue => e
+      log :level => :error,
+          :message => "[Airbrake::Sender#setup_http_connection] Failure initializing the HTTP connection.\n" +
+                      "Error: #{e.class} - #{e.message}\nBacktrace:\n#{e.backtrace.join("\n\t")}"
+      raise e
     end
-
-    private
-
-    attr_reader :proxy_host, :proxy_port, :proxy_user, :proxy_pass, :protocol,
-      :host, :port, :secure, :http_open_timeout, :http_read_timeout
-
-    def url
-      URI.parse("#{protocol}://#{host}:#{port}").merge(NOTICES_URI)
-    end
-
-    def log(level, message, response = nil)
-      logger.send level, LOG_PREFIX + message if logger
-      Airbrake.report_environment_info
-      Airbrake.report_response_body(response.body) if response && response.respond_to?(:body)
-    end
-
-    def logger
-      Airbrake.logger
-    end
-
   end
 end

@@ -7,9 +7,7 @@ module Airbrake
 
       private
 
-      def airbrake_javascript_notifier
-        return unless Airbrake.configuration.public?
-
+      def airbrake_javascript_notifier_options
         path = File.join File.dirname(__FILE__), '..', '..', 'templates', 'javascript_notifier.erb'
         host = Airbrake.configuration.host.dup
         port = Airbrake.configuration.port
@@ -21,22 +19,33 @@ module Airbrake
           :use_full_path     => false,
           :locals            => {
             :host            => host,
-            :api_key         => Airbrake.configuration.api_key,
+            :api_key         => Airbrake.configuration.js_api_key,
             :environment     => Airbrake.configuration.environment_name,
             :action_name     => action_name,
             :controller_name => controller_name,
             :url             => request.url
           }
         }
+      end
 
-        if @template
+      def airbrake_javascript_notifier
+        return unless Airbrake.configuration.public?
+
+        options = airbrake_javascript_notifier_options
+
+        res = if @template
           @template.render(options)
         else
           render_to_string(options)
         end
 
-      end
+        if res.respond_to?(:html_safe)
+          res.html_safe
+        else
+          res
+        end
 
+      end
     end
   end
 end

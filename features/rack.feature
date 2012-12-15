@@ -1,27 +1,60 @@
 Feature: Use the notifier in a plain Rack app
+  	
+ Scenario: Rescue and exception in a Rack app
 
-  Background:
-    Given I have built and installed the "airbrake" gem
+   Given the following Rack app:
+     """
+     require 'logger'
+     require 'rack'
+     require 'airbrake'
+	  	
+     Airbrake.configure do |config|
+       config.api_key = 'my_api_key'
+       config.logger = Logger.new STDOUT
+     end
+	  	
+     app = Rack::Builder.app do
+       use Airbrake::Rack
+       run lambda { |env| raise "Rack down" }
+     end
 
-  Scenario: Rescue and exception in a Rack app
-    Given the following Rack app:
-      """
-      require 'rack'
-      require 'airbrake'
+     """
+   When I perform a Rack request to "http://example.com:123/test/index?param=value"
+   Then I should receive a Airbrake notification
+	  	
+ Scenario: Ignore user agents
 
-      Airbrake.configure do |config|
-        config.api_key = 'my_api_key'
-      end
-
-      app = Rack::Builder.app do
-        use Airbrake::Rack
-        run lambda { |env| raise "Rack down" }
-      end
-      """
-    When I perform a Rack request to "http://example.com:123/test/index?param=value"
-    Then I should receive the following Airbrake notification:
-      | error message | RuntimeError: Rack down                       |
-      | error class   | RuntimeError                                  |
-      | parameters    | param: value                                  |
-      | url           | http://example.com:123/test/index?param=value |
-
+   Given the following Rack app:
+     """
+     require 'logger'
+     require 'rack'
+     require 'airbrake'
+	  	
+     Airbrake.configure do |config|
+       config.api_key = 'my_api_key'
+       config.ignore_user_agent << /ignore/
+       config.logger = Logger.new STDOUT
+     end
+	  	
+     class Mock
+       class AppendUserAgent
+         def initialize(app)
+           @app = app
+         end
+	  	
+         def call(env)
+           env["HTTP_USER_AGENT"] = "ignore"
+           @app.call(env)
+         end
+       end
+     end
+	  	
+     app = Rack::Builder.app do
+       use Airbrake::Rack
+       use Mock::AppendUserAgent
+       run lambda { |env| raise "Rack down" }
+     end
+	  	
+     """
+   When I perform a Rack request to "http://example.com:123/test/index?param=value"
+   Then I should not receive a Airbrake notification
